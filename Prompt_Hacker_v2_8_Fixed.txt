@@ -3490,11 +3490,12 @@ local calcParaFrame = createParagraph(farmPage, calcBaseTitle, "Введите �
 
 local calcTitleLabel = nil
 local calcContentLabel = nil
-for _, ch in ipairs(calcParaFrame:GetChildren()) do
+local searchTarget = calcParaFrame or farmPage
+for _, ch in ipairs(searchTarget:GetDescendants()) do
     if ch:IsA("TextLabel") then
-        if ch.Position.Y.Offset <= 10 then
+        if ch.Text == calcBaseTitle then
             calcTitleLabel = ch
-        else
+        elseif ch.Text == "Введите пример ниже (например: 16*3)" then
             calcContentLabel = ch
         end
     end
@@ -3503,7 +3504,7 @@ end
 local function updateCalcDisplay(answerText, exprText)
     if not calcTitleLabel then return end
     if answerText then
-        calcTitleLabel.Text = calcBaseTitle .. "  ➔  ОТВЕТ: " .. answerText
+        calcTitleLabel.Text = calcBaseTitle .. "  ->  ОТВЕТ: " .. answerText
         if calcContentLabel then
             calcContentLabel.Text = "Пример: " .. (exprText or "")
         end
@@ -3529,6 +3530,7 @@ createInput(farmPage, "Ввести пример вручную", "Пример:
 end)
 
 local crazyDecoyModel = nil
+local crazyDecoyEnabled = false
 
 local function destroyCrazyDecoy()
     if crazyDecoyModel then
@@ -3537,7 +3539,7 @@ local function destroyCrazyDecoy()
     end
 end
 
-createToggle(farmPage, "🤡 Безумный клон-приманка (PivotTo + Raycast)", function(Value)
+createToggle(farmPage, "🤡 Безумный клон-приманка (Живой игрок)", function(Value)
     crazyDecoyEnabled = Value
     destroyCrazyDecoy()
 
@@ -3545,6 +3547,21 @@ createToggle(farmPage, "🤡 Безумный клон-приманка (PivotTo
 
     local char = Player.Character
     if not char or not char:FindFirstChild("HumanoidRootPart") then return end
+
+    local walkAnimTemplate, jumpAnimTemplate
+    local origAnimate = char:FindFirstChild("Animate")
+    if origAnimate then
+        local runVal = origAnimate:FindFirstChild("run") or origAnimate:FindFirstChild("walk")
+        if runVal then
+            local anim = runVal:FindFirstChildOfClass("Animation")
+            if anim then walkAnimTemplate = anim:Clone() end
+        end
+        local jumpVal = origAnimate:FindFirstChild("jump")
+        if jumpVal then
+            local anim = jumpVal:FindFirstChildOfClass("Animation")
+            if anim then jumpAnimTemplate = anim:Clone() end
+        end
+    end
 
     char.Archivable = true
     local decoy = char:Clone()
@@ -3556,7 +3573,7 @@ createToggle(farmPage, "🤡 Безумный клон-приманка (PivotTo
             obj:Destroy()
         elseif obj:IsA("BasePart") then
             obj.Anchored = false
-            obj.CanCollide = false
+            obj.CanCollide = (obj.Name == "HumanoidRootPart" or obj.Name == "Torso" or obj.Name == "UpperTorso" or obj.Name == "LowerTorso")
         end
     end
 
@@ -3567,78 +3584,101 @@ createToggle(farmPage, "🤡 Безумный клон-приманка (PivotTo
         return
     end
 
-    dHum.DisplayName = Player.DisplayName .. " [🤡 Клон]"
-    dHum.WalkSpeed = 32
-    dHum.PlatformStand = true
+    dHum.DisplayName = Player.DisplayName
+    dHum.WalkSpeed = 16
+    dHum.JumpPower = 50
+    dHum.PlatformStand = false
+    dHum.AutoRotate = true
     decoy.Parent = workspace
     crazyDecoyModel = decoy
 
-    decoy:PivotTo(char.HumanoidRootPart.CFrame * CFrame.new(3, 0, 3))
+    decoy:PivotTo(char.HumanoidRootPart.CFrame * CFrame.new(4, 1, 4))
+
+    local walkTrack, jumpTrack
+    local animator = dHum:FindFirstChildOfClass("Animator") or Instance.new("Animator", dHum)
+    if walkAnimTemplate then
+        walkAnimTemplate.Parent = decoy
+        walkTrack = animator:LoadAnimation(walkAnimTemplate)
+        walkTrack.Looped = true
+    end
+    if jumpAnimTemplate then
+        jumpAnimTemplate.Parent = decoy
+        jumpTrack = animator:LoadAnimation(jumpAnimTemplate)
+        jumpTrack.Looped = false
+    end
+
+    dHum.Running:Connect(function(speed)
+        if not walkTrack then return end
+        if speed > 1 then
+            if not walkTrack.IsPlaying then walkTrack:Play(0.15) end
+            walkTrack:AdjustSpeed(speed / 16)
+        else
+            if walkTrack.IsPlaying then walkTrack:Stop(0.15) end
+        end
+    end)
+
+    dHum.StateChanged:Connect(function(_, newState)
+        if not jumpTrack then return end
+        if newState == Enum.HumanoidStateType.Jumping or newState == Enum.HumanoidStateType.Freefall then
+            if not jumpTrack.IsPlaying then jumpTrack:Play(0.1) end
+        else
+            if jumpTrack.IsPlaying then jumpTrack:Stop(0.15) end
+        end
+    end)
 
     task.spawn(function()
-        local runService = game:GetService("RunService")
-        local angle = 0
+        local nextRouteTick = 0
+        local nextJumpTick = tick() + (math.random(10, 100) / 10)
+        local lastPos = dHrp.Position
+        local stuckChecks = 0
 
         while crazyDecoyEnabled and decoy.Parent and not _G.ScriptDestroyed do
-            if not _G.ScriptPaused then
-                local target = nil
-                local minDist = math.huge
-                for _, plr in ipairs(game.Players:GetPlayers()) do
-                    if plr ~= Player and plr.Character then
-                        local pHrp = plr.Character:FindFirstChild("HumanoidRootPart")
-                        local pHum = plr.Character:FindFirstChildOfClass("Humanoid")
-                        if pHrp and pHum and pHum.Health > 0 then
-                            local dist = (pHrp.Position - dHrp.Position).Magnitude
-                            if dist < minDist then
-                                minDist = dist
-                                target = pHrp
-                            end
-                        end
-                    end
+            if not _G.ScriptPaused and dHum.Health > 0 then
+                local now = tick()
+
+                if now >= nextRouteTick then
+                    nextRouteTick = now + (math.random(18, 42) / 10)
+                    local roamOffset = Vector3.new(math.random(-140, 140), 0, math.random(-140, 140))
+                    dHum:MoveTo(dHrp.Position + roamOffset)
                 end
 
-                local targetCFrame = nil
-                if target and minDist < 300 then
-                    angle = angle + 0.08
-                    local offset = Vector3.new(math.cos(angle) * 6, 0, math.sin(angle) * 6)
-                    local desiredPos = target.Position + offset
+                if now >= nextJumpTick then
+                    nextJumpTick = now + (math.random(10, 100) / 10)
+                    dHum.Jump = true
+                end
 
-                    local rayParams = RaycastParams.new()
-                    rayParams.FilterType = Enum.RaycastFilterType.Exclude
-                    rayParams.FilterDescendantsInstances = {decoy, char}
-                    local rayRes = workspace:Raycast(target.Position, offset, rayParams)
-                    if rayRes then
-                        desiredPos = rayRes.Position + Vector3.new(0, 2, 0)
+                local rayParams = RaycastParams.new()
+                rayParams.FilterType = Enum.RaycastFilterType.Exclude
+                rayParams.FilterDescendantsInstances = {decoy, char}
+                local wallHit = workspace:Raycast(dHrp.Position, dHrp.CFrame.LookVector * 3.8, rayParams)
+                if wallHit then
+                    dHum.Jump = true
+                end
+
+                if (dHrp.Position - lastPos).Magnitude < 0.4 then
+                    stuckChecks = stuckChecks + 1
+                    if stuckChecks >= 8 then
+                        stuckChecks = 0
+                        nextRouteTick = 0
+                        dHum.Jump = true
                     end
-
-                    targetCFrame = CFrame.new(desiredPos, target.Position)
                 else
-                    local myHrp = char and char:FindFirstChild("HumanoidRootPart")
-                    if myHrp then
-                        angle = angle + 0.05
-                        local offset = Vector3.new(math.cos(angle) * 8, 0, math.sin(angle) * 8)
-                        targetCFrame = CFrame.new(myHrp.Position + offset, myHrp.Position)
-                    end
+                    stuckChecks = 0
                 end
-
-                if targetCFrame then
-                    decoy:PivotTo(decoy:GetPivot():Lerp(targetCFrame, 0.15))
-                end
+                lastPos = dHrp.Position
             end
-            runService.Heartbeat:Wait()
+            task.wait(0.15)
         end
         destroyCrazyDecoy()
     end)
 end)
-end
-end
 -- ==========================================
 -- ----- КОНЕЦ ЧАСТИ 8.2 -----
 -- ==========================================
 -- =========================================================
 -- ----- НАЧАЛО ЧАСТИ 9.1 -----
 -- =========================================================
-do
+
 _G.SavedZoneBoxes = _G.SavedZoneBoxes or {}
 local draftPointA = nil
 local draftPointB = nil
@@ -3716,7 +3756,6 @@ toggleZonesBtn.Font = Enum.Font.SourceSansBold
 toggleZonesBtn.TextSize = 11
 Instance.new("UICorner", toggleZonesBtn).CornerRadius = UDim.new(0, 4)
 
--- ПОДСКАЗКА ПО СИМВОЛАМ ВВЕРХУ НАД СПИСКОМ КОРОБОК
 local legendLbl = Instance.new("TextLabel", creatorFrame)
 legendLbl.Size = UDim2.new(1, -10, 0, 18)
 legendLbl.Position = UDim2.new(0, 5, 0, 107)
@@ -3728,13 +3767,9 @@ legendLbl.TextSize = 10
 legendLbl.TextXAlignment = Enum.TextXAlignment.Center
 
 local function getBoxColorByRule(rule)
-    if rule == "+" then
-        return Color3.fromRGB(255, 220, 60)
-    elseif rule == "-" then
-        return Color3.fromRGB(255, 60, 60)
-    else
-        return Color3.fromRGB(100, 200, 255)
-    end
+    if rule == "+" then return Color3.fromRGB(255, 220, 60)
+    elseif rule == "-" then return Color3.fromRGB(255, 60, 60)
+    else return Color3.fromRGB(100, 200, 255) end
 end
 
 local function buildBoxVisual(ptA, ptB, boxTitle, ruleStr)
@@ -3797,9 +3832,7 @@ local function updateVisualColor(bData)
         local sel = bData.Visual:FindFirstChild("BoxSel")
         if sel then sel.Color3 = col end
         local gui = bData.Visual:FindFirstChild("BoxTitleGui")
-        if gui and gui:FindFirstChild("TitleLbl") then
-            gui.TitleLbl.TextColor3 = col
-        end
+        if gui and gui:FindFirstChild("TitleLbl") then gui.TitleLbl.TextColor3 = col end
     end
 end
 
@@ -3816,13 +3849,11 @@ local function updateCreatorUI()
         nameBox.Text = editingBoxData.Name
         saveBoxBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
         saveBoxBtn.TextColor3 = Color3.fromRGB(150, 150, 150)
-
         if not editingBoxData.PointA then
             statusLbl.Text = "Восстановите Точку А для: " .. editingBoxData.Name
             btnA.BackgroundColor3 = Color3.fromRGB(50, 140, 50)
             btnA.Text = "📍 Поставить А"
             btnA.TextColor3 = Color3.fromRGB(255, 255, 255)
-
             btnB.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
             btnB.Text = "📍 Точка Б (Есть)"
             btnB.TextColor3 = Color3.fromRGB(150, 150, 150)
@@ -3831,7 +3862,6 @@ local function updateCreatorUI()
             btnA.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
             btnA.Text = "📍 Точка А (Есть)"
             btnA.TextColor3 = Color3.fromRGB(150, 150, 150)
-
             btnB.BackgroundColor3 = Color3.fromRGB(50, 140, 50)
             btnB.Text = "📍 Поставить Б"
             btnB.TextColor3 = Color3.fromRGB(255, 255, 255)
@@ -3844,11 +3874,9 @@ local function updateCreatorUI()
         btnA.BackgroundColor3 = Color3.fromRGB(50, 140, 50)
         btnA.Text = "📍 Точка А"
         btnA.TextColor3 = Color3.fromRGB(255, 255, 255)
-
         btnB.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
         btnB.Text = "📍 Точка Б (Блок)"
         btnB.TextColor3 = Color3.fromRGB(150, 150, 150)
-
         nameBox.TextEditable = false
         nameBox.Text = ""
         nameBox.PlaceholderText = "Сначала поставьте А и Б..."
@@ -3859,11 +3887,9 @@ local function updateCreatorUI()
         btnA.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
         btnA.Text = "📍 Точка А (Блок)"
         btnA.TextColor3 = Color3.fromRGB(150, 150, 150)
-
         btnB.BackgroundColor3 = Color3.fromRGB(50, 140, 50)
         btnB.Text = "📍 Точка Б"
         btnB.TextColor3 = Color3.fromRGB(255, 255, 255)
-
         nameBox.TextEditable = false
         nameBox.PlaceholderText = "Теперь поставьте Точку Б..."
     else
@@ -3871,11 +3897,9 @@ local function updateCreatorUI()
         btnA.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
         btnA.Text = "📍 Точка А (Блок)"
         btnA.TextColor3 = Color3.fromRGB(150, 150, 150)
-
         btnB.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
         btnB.Text = "📍 Точка Б (Блок)"
         btnB.TextColor3 = Color3.fromRGB(150, 150, 150)
-
         nameBox.TextEditable = true
         nameBox.PlaceholderText = "Введите название коробки..."
         saveBoxBtn.BackgroundColor3 = Color3.fromRGB(40, 120, 200)
@@ -3884,7 +3908,7 @@ local function updateCreatorUI()
 end
 
 local boxesScroll = Instance.new("ScrollingFrame", zonesPage)
-boxesScroll.Size = UDim2.new(1, 0, 0, 165)
+boxesScroll.Size = UDim2.new(1, 0, 0, 135)
 boxesScroll.BackgroundColor3 = Color3.fromRGB(22, 22, 22)
 boxesScroll.BorderSizePixel = 0
 boxesScroll.ScrollBarThickness = 4
@@ -3898,9 +3922,7 @@ end)
 
 local function hasAnotherPlusBox(excludeBox)
     for _, item in ipairs(_G.SavedZoneBoxes) do
-        if item ~= excludeBox and item.Rule == "+" then
-            return true
-        end
+        if item ~= excludeBox and item.Rule == "+" then return true end
     end
     return false
 end
@@ -3917,7 +3939,6 @@ refreshBoxesList = function()
         row.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
         Instance.new("UICorner", row).CornerRadius = UDim.new(0, 5)
 
-        -- КВАДРАТИК СЛЕВА ОТ НАЗВАНИЯ (КАК ВО ВКЛАДКЕ "ТОЧКИ")
         local ruleBtn = Instance.new("TextButton", row)
         ruleBtn.Size = UDim2.new(0, 24, 0, 24)
         ruleBtn.Position = UDim2.new(0, 6, 0.5, -12)
@@ -3933,15 +3954,12 @@ refreshBoxesList = function()
         local function syncRuleBtnStyle()
             ruleBtn.Text = bData.Rule or ""
             if bData.Rule == "+" then
-                ruleBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
                 ruleBtn.TextColor3 = Color3.fromRGB(255, 220, 60)
                 boxStroke.Color = Color3.fromRGB(255, 220, 60)
             elseif bData.Rule == "-" then
-                ruleBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
                 ruleBtn.TextColor3 = Color3.fromRGB(255, 70, 70)
                 boxStroke.Color = Color3.fromRGB(255, 70, 70)
             else
-                ruleBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
                 ruleBtn.TextColor3 = Color3.fromRGB(200, 200, 200)
                 boxStroke.Color = Color3.fromRGB(90, 90, 90)
             end
@@ -3951,11 +3969,7 @@ refreshBoxesList = function()
         ruleBtn.MouseButton1Click:Connect(function()
             local cur = bData.Rule or ""
             if cur == "" then
-                if hasAnotherPlusBox(bData) then
-                    bData.Rule = "-"
-                else
-                    bData.Rule = "+"
-                end
+                bData.Rule = hasAnotherPlusBox(bData) and "-" or "+"
             elseif cur == "+" then
                 bData.Rule = "-"
             else
@@ -3984,7 +3998,6 @@ refreshBoxesList = function()
         delABtn.Font = Enum.Font.SourceSansBold
         delABtn.TextSize = 10
         Instance.new("UICorner", delABtn).CornerRadius = UDim.new(0, 4)
-
         delABtn.MouseButton1Click:Connect(function()
             if not bData.PointA or editingBoxData then return end
             bData.PointA = nil
@@ -4005,7 +4018,6 @@ refreshBoxesList = function()
         delBBtn.Font = Enum.Font.SourceSansBold
         delBBtn.TextSize = 10
         Instance.new("UICorner", delBBtn).CornerRadius = UDim.new(0, 4)
-
         delBBtn.MouseButton1Click:Connect(function()
             if not bData.PointB or editingBoxData then return end
             bData.PointB = nil
@@ -4026,7 +4038,6 @@ refreshBoxesList = function()
         delAllBtn.Font = Enum.Font.SourceSansBold
         delAllBtn.TextSize = 11
         Instance.new("UICorner", delAllBtn).CornerRadius = UDim.new(0, 4)
-
         delAllBtn.MouseButton1Click:Connect(function()
             if bData.MarkerA then bData.MarkerA:Destroy() end
             if bData.MarkerB then bData.MarkerB:Destroy() end
@@ -4045,13 +4056,11 @@ end
 -- =========================================================
 -- ----- НАЧАЛО ЧАСТИ 9.3 -----
 -- =========================================================
-do
 
 btnA.MouseButton1Click:Connect(function()
     local char = Player.Character
     local root = (invisActive and ghostSimulationCube) or (godmodeEnabled and godGroundCube) or (char and char:FindFirstChild("HumanoidRootPart"))
     if not root then return end
-
     if editingBoxData and not editingBoxData.PointA then
         editingBoxData.PointA = root.Position
         editingBoxData.MarkerA = createZoneMarker(editingBoxData.PointA, editingBoxData.Name .. " [А]", Color3.fromRGB(255, 220, 60))
@@ -4062,7 +4071,6 @@ btnA.MouseButton1Click:Connect(function()
         refreshBoxesList()
         return
     end
-
     if not editingBoxData and not draftPointA then
         draftPointA = root.Position
         if draftMarkerA then draftMarkerA:Destroy() end
@@ -4075,7 +4083,6 @@ btnB.MouseButton1Click:Connect(function()
     local char = Player.Character
     local root = (invisActive and ghostSimulationCube) or (godmodeEnabled and godGroundCube) or (char and char:FindFirstChild("HumanoidRootPart"))
     if not root then return end
-
     if editingBoxData and not editingBoxData.PointB then
         editingBoxData.PointB = root.Position
         editingBoxData.MarkerB = createZoneMarker(editingBoxData.PointB, editingBoxData.Name .. " [Б]", Color3.fromRGB(60, 220, 255))
@@ -4086,7 +4093,6 @@ btnB.MouseButton1Click:Connect(function()
         refreshBoxesList()
         return
     end
-
     if not editingBoxData and draftPointA and not draftPointB then
         draftPointB = root.Position
         if draftMarkerB then draftMarkerB:Destroy() end
@@ -4099,42 +4105,24 @@ local function finalizeNewBox()
     if editingBoxData or not draftPointA or not draftPointB then return end
     local boxName = nameBox.Text:gsub("^%s*(.-)%s*$", "%1")
     if boxName == "" then return end
-
     if draftMarkerA then draftMarkerA:Destroy() draftMarkerA = nil end
     if draftMarkerB then draftMarkerB:Destroy() draftMarkerB = nil end
-
     local mA = createZoneMarker(draftPointA, boxName .. " [А]", Color3.fromRGB(255, 220, 60))
     local mB = createZoneMarker(draftPointB, boxName .. " [Б]", Color3.fromRGB(60, 220, 255))
     local vis = buildBoxVisual(draftPointA, draftPointB, boxName, "")
-
-    table.insert(_G.SavedZoneBoxes, {
-        Name = boxName,
-        PointA = draftPointA,
-        PointB = draftPointB,
-        MarkerA = mA,
-        MarkerB = mB,
-        Visual = vis,
-        Rule = "", -- "" (ничего), "+" (только внутри), "-" (не заходить)
-        Active = true
-    })
-
-    draftPointA = nil
-    draftPointB = nil
-    nameBox.Text = ""
+    table.insert(_G.SavedZoneBoxes, {Name = boxName, PointA = draftPointA, PointB = draftPointB, MarkerA = mA, MarkerB = mB, Visual = vis, Rule = "", Active = true})
+    draftPointA, draftPointB, nameBox.Text = nil, nil, ""
     updateCreatorUI()
     refreshBoxesList()
 end
 
 saveBoxBtn.MouseButton1Click:Connect(finalizeNewBox)
-nameBox.FocusLost:Connect(function(enterPressed)
-    if enterPressed then finalizeNewBox() end
-end)
+nameBox.FocusLost:Connect(function(enterPressed) if enterPressed then finalizeNewBox() end end)
 
 toggleZonesBtn.MouseButton1Click:Connect(function()
     zonesEnabled = not zonesEnabled
-    toggleZonesBtn.Text = zonesEnabled and "Зоны: ВКЛ (+ внутри / - снаружи)" or "Зоны: ВЫКЛ (+ только внутри / - не заходить)"
+    toggleZonesBtn.Text = zonesEnabled and "Зоны: ВКЛ (+ внутри / - снаружи)" or "Зоны: ВЫКЛ"
     toggleZonesBtn.BackgroundColor3 = zonesEnabled and Color3.fromRGB(50, 180, 50) or Color3.fromRGB(200, 50, 50)
-
     if zonesEnabled then
         task.spawn(function()
             while zonesEnabled and not _G.ScriptDestroyed do
@@ -4146,31 +4134,23 @@ toggleZonesBtn.MouseButton1Click:Connect(function()
                             if bData.Active and bData.PointA and bData.PointB and (bData.Rule == "+" or bData.Rule == "-") then
                                 local minX = math.min(bData.PointA.X, bData.PointB.X) - 5
                                 local maxX = math.max(bData.PointA.X, bData.PointB.X) + 5
+                                local midY = (bData.PointA.Y + bData.PointB.Y) / 2
+                                local minY, maxY = midY - 10, midY + 10
                                 local minZ = math.min(bData.PointA.Z, bData.PointB.Z) - 5
                                 local maxZ = math.max(bData.PointA.Z, bData.PointB.Z) + 5
-                                local center = Vector3.new((minX + maxX)/2, math.max(bData.PointA.Y, bData.PointB.Y) + 3, (minZ + maxZ)/2)
-
                                 local pos = hrp.Position
-                                local isInside = (pos.X >= minX and pos.X <= maxX) and (pos.Z >= minZ and pos.Z <= maxZ)
+                                local isInside = (pos.X >= minX and pos.X <= maxX) and (pos.Y >= minY and pos.Y <= maxY) and (pos.Z >= minZ and pos.Z <= maxZ)
 
                                 if bData.Rule == "+" and not isInside then
+                                    local clamped = Vector3.new(math.clamp(pos.X, minX + 1.5, maxX - 1.5), math.clamp(pos.Y, minY + 1.5, maxY - 1.5), math.clamp(pos.Z, minZ + 1.5, maxZ - 1.5))
                                     hrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
-                                    hrp.CFrame = CFrame.new(center.X, pos.Y + 2, center.Z)
+                                    hrp.CFrame = CFrame.new(clamped) * (hrp.CFrame - hrp.CFrame.Position)
                                 elseif bData.Rule == "-" and isInside then
-                                    local distLeft = math.abs(pos.X - minX)
-                                    local distRight = math.abs(maxX - pos.X)
-                                    local distTop = math.abs(pos.Z - minZ)
-                                    local distBottom = math.abs(maxZ - pos.Z)
-                                    local minDist = math.min(distLeft, distRight, distTop, distBottom)
-
-                                    local pushPos = pos
-                                    if minDist == distLeft then pushPos = Vector3.new(minX - 6, pos.Y, pos.Z)
-                                    elseif minDist == distRight then pushPos = Vector3.new(maxX + 6, pos.Y, pos.Z)
-                                    elseif minDist == distTop then pushPos = Vector3.new(pos.X, pos.Y, minZ - 6)
-                                    else pushPos = Vector3.new(pos.X, pos.Y, maxZ + 6) end
-
+                                    local dL, dR, dT, dB = math.abs(pos.X - minX), math.abs(maxX - pos.X), math.abs(pos.Z - minZ), math.abs(maxZ - pos.Z)
+                                    local mD = math.min(dL, dR, dT, dB)
+                                    local pushPos = (mD == dL and Vector3.new(minX - 6, pos.Y, pos.Z)) or (mD == dR and Vector3.new(maxX + 6, pos.Y, pos.Z)) or (mD == dT and Vector3.new(pos.X, pos.Y, minZ - 6)) or Vector3.new(pos.X, pos.Y, maxZ + 6)
                                     hrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
-                                    hrp.CFrame = CFrame.new(pushPos)
+                                    hrp.CFrame = CFrame.new(pushPos) * (hrp.CFrame - hrp.CFrame.Position)
                                 end
                             end
                         end
@@ -4182,10 +4162,8 @@ toggleZonesBtn.MouseButton1Click:Connect(function()
     end
 end)
 
-updateCreatorUI()
 refreshBoxesList()
-end
-end
+
 -- =========================================================
 -- ----- КОНЕЦ ЧАСТИ 9.3 -----
 -- =========================================================
@@ -4209,7 +4187,6 @@ local listLayout = Instance.new("UIListLayout")
 listLayout.Padding = UDim.new(0, 6)
 listLayout.SortOrder = Enum.SortOrder.LayoutOrder
 listLayout.Parent = pointScrollFrame
-
 listLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
     pointScrollFrame.CanvasSize = UDim2.new(0, 0, 0, listLayout.AbsoluteContentSize.Y + 10)
 end)
@@ -4269,7 +4246,7 @@ refreshPointList = function()
         pFrame.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
         pFrame.Parent = pointScrollFrame
         Instance.new("UICorner", pFrame).CornerRadius = UDim.new(0, 5)
-        
+
         local numBox = Instance.new("TextButton")
         numBox.Size = UDim2.new(0, 24, 0, 24)
         numBox.Position = UDim2.new(0, 6, 0.5, -12)
@@ -4281,7 +4258,6 @@ refreshPointList = function()
         numBox.Parent = pFrame
         Instance.new("UICorner", numBox).CornerRadius = UDim.new(0, 4)
         pt.NumBox = numBox
-        
         numBox.MouseButton1Click:Connect(function()
             if pt.Order and pt.Order > 0 then
                 pt.Order = nil
@@ -4293,7 +4269,7 @@ refreshPointList = function()
                 numBox.Text = tostring(orderCounter)
             end
         end)
-        
+
         local nameLabel = Instance.new("TextLabel")
         nameLabel.Size = UDim2.new(1, -140, 1, 0)
         nameLabel.Position = UDim2.new(0, 38, 0, 0)
@@ -4304,7 +4280,7 @@ refreshPointList = function()
         nameLabel.Font = Enum.Font.SourceSans
         nameLabel.TextXAlignment = Enum.TextXAlignment.Left
         nameLabel.Parent = pFrame
-        
+
         local tpBtn = Instance.new("TextButton")
         tpBtn.Size = UDim2.new(0, 35, 0, 22)
         tpBtn.Position = UDim2.new(1, -85, 0.5, -11)
@@ -4315,20 +4291,15 @@ refreshPointList = function()
         tpBtn.TextSize = 11
         tpBtn.Parent = pFrame
         Instance.new("UICorner", tpBtn).CornerRadius = UDim.new(0, 4)
-        
-        tpBtn.MouseButton1Click:Connect(function() 
-            if invisActive and ghostSimulationCube then
-                ghostSimulationCube.Position = pt.Pos
-            elseif godmodeEnabled and godGroundCube then
-                godGroundCube.Position = pt.Pos
+        tpBtn.MouseButton1Click:Connect(function()
+            if invisActive and ghostSimulationCube then ghostSimulationCube.Position = pt.Pos
+            elseif godmodeEnabled and godGroundCube then godGroundCube.Position = pt.Pos
             else
                 local char = Player.Character
-                if char and char:FindFirstChild("HumanoidRootPart") then
-                    char.HumanoidRootPart.CFrame = CFrame.new(pt.Pos + Vector3.new(0, 3, 0))
-                end
+                if char and char:FindFirstChild("HumanoidRootPart") then char.HumanoidRootPart.CFrame = CFrame.new(pt.Pos + Vector3.new(0, 3, 0)) end
             end
         end)
-        
+
         local delBtn = Instance.new("TextButton")
         delBtn.Size = UDim2.new(0, 35, 0, 22)
         delBtn.Position = UDim2.new(1, -42, 0.5, -11)
@@ -4339,7 +4310,6 @@ refreshPointList = function()
         delBtn.TextSize = 11
         delBtn.Parent = pFrame
         Instance.new("UICorner", delBtn).CornerRadius = UDim.new(0, 4)
-        
         delBtn.MouseButton1Click:Connect(function()
             if pt.Visual then pt.Visual:Destroy() end
             table.remove(savedPoints, index)
@@ -4361,7 +4331,6 @@ addBtn.MouseButton1Click:Connect(function()
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
     if hrp then
         local currentPos = (invisActive and ghostSimulationCube) and ghostSimulationCube.Position or ((godmodeEnabled and godGroundCube) and godGroundCube.Position or hrp.Position)
-        
         if box.Text == "" then
             local maxNum = 0
             for _, pt in ipairs(savedPoints) do
@@ -4381,19 +4350,19 @@ addBtn.MouseButton1Click:Connect(function()
         part.Material = Enum.Material.Neon
         part.Color = Color3.fromRGB(255, 220, 60)
         part.Parent = workspace
-        
+
         local adorn = Instance.new("BoxHandleAdornment", part)
         adorn.Size = part.Size
         adorn.Color3 = part.Color
         adorn.AlwaysOnTop = true
         adorn.ZIndex = 4
         adorn.Adornee = part
-        
+
         local bbg = Instance.new("BillboardGui", part)
         bbg.AlwaysOnTop = true
         bbg.Size = UDim2.new(0, 140, 0, 40)
         bbg.StudsOffset = Vector3.new(0, 3, 0)
-        
+
         local lbl = Instance.new("TextLabel", bbg)
         lbl.Size = UDim2.new(1, 0, 1, 0)
         lbl.BackgroundTransparency = 1
@@ -4401,7 +4370,7 @@ addBtn.MouseButton1Click:Connect(function()
         lbl.TextColor3 = Color3.fromRGB(255, 220, 60)
         lbl.Font = Enum.Font.SourceSansBold
         lbl.TextSize = 16
-        
+
         task.spawn(function()
             local cam = workspace.CurrentCamera
             while part and part.Parent and not _G.ScriptDestroyed do
@@ -4410,9 +4379,8 @@ addBtn.MouseButton1Click:Connect(function()
                 task.wait(0.2)
             end
         end)
-        
+
         table.insert(savedPoints, {Name = savedNameTemp, Pos = currentPos, Order = nil, Visual = part})
-        
         local maxNum = 0
         for _, pt in ipairs(savedPoints) do
             local num = tonumber(pt.Name:match("Точка%s+(%d+)"))
@@ -4431,13 +4399,11 @@ bPanel.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
 bPanel.Parent = pointsPage
 Instance.new("UICorner", bPanel).CornerRadius = UDim.new(0, 5)
 
--- Поле скорости зиплайна
 local zipSpeedBox = Instance.new("TextBox", bPanel)
 zipSpeedBox.Size = UDim2.new(0.48, -5, 0, 26)
 zipSpeedBox.Position = UDim2.new(0, 5, 0, 5)
 zipSpeedBox.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
 zipSpeedBox.Text = "Скор: " .. ziplineSpeedValue
-zipSpeedBox.PlaceholderText = "Скорость..."
 zipSpeedBox.TextColor3 = Color3.fromRGB(255, 220, 60)
 zipSpeedBox.Font = Enum.Font.SourceSansBold
 zipSpeedBox.TextSize = 11
@@ -4449,13 +4415,11 @@ zipSpeedBox.FocusLost:Connect(function()
     zipSpeedBox.Text = "Скор: " .. ziplineSpeedValue
 end)
 
--- Поле задержки на точке (в секундах)
 local zipDelayBox = Instance.new("TextBox", bPanel)
 zipDelayBox.Size = UDim2.new(0.48, -5, 0, 26)
 zipDelayBox.Position = UDim2.new(0.52, 0, 0, 5)
 zipDelayBox.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
 zipDelayBox.Text = "Пауза: " .. ziplineDelayValue .. "с"
-zipDelayBox.PlaceholderText = "Сек..."
 zipDelayBox.TextColor3 = Color3.fromRGB(100, 220, 255)
 zipDelayBox.Font = Enum.Font.SourceSansBold
 zipDelayBox.TextSize = 11
@@ -4467,7 +4431,6 @@ zipDelayBox.FocusLost:Connect(function()
     zipDelayBox.Text = "Пауза: " .. ziplineDelayValue .. "с"
 end)
 
--- Переключатель режима: Полет / Телепорт
 local zipModeBtn = Instance.new("TextButton", bPanel)
 zipModeBtn.Size = UDim2.new(0.48, -5, 0, 28)
 zipModeBtn.Position = UDim2.new(0, 5, 0, 36)
@@ -4477,7 +4440,6 @@ zipModeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 zipModeBtn.Font = Enum.Font.SourceSansBold
 zipModeBtn.TextSize = 11
 Instance.new("UICorner", zipModeBtn).CornerRadius = UDim.new(0, 4)
-
 local isTeleportMode = false
 zipModeBtn.MouseButton1Click:Connect(function()
     isTeleportMode = not isTeleportMode
@@ -4485,7 +4447,6 @@ zipModeBtn.MouseButton1Click:Connect(function()
     zipModeBtn.BackgroundColor3 = isTeleportMode and Color3.fromRGB(130, 60, 160) or Color3.fromRGB(45, 90, 140)
 end)
 
--- Тумблер падения на точке
 local dropToggleBtn = Instance.new("TextButton", bPanel)
 dropToggleBtn.Size = UDim2.new(0.48, -5, 0, 28)
 dropToggleBtn.Position = UDim2.new(0.52, 0, 0, 36)
@@ -4495,7 +4456,6 @@ dropToggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 dropToggleBtn.Font = Enum.Font.SourceSansBold
 dropToggleBtn.TextSize = 11
 Instance.new("UICorner", dropToggleBtn).CornerRadius = UDim.new(0, 4)
-
 dropToggleBtn.MouseButton1Click:Connect(function()
     dropOnPoint = not dropOnPoint
     dropToggleBtn.Text = dropOnPoint and "Падать: ДА" or "Падать: НЕТ (Висеть)"
@@ -4508,160 +4468,172 @@ end)
 -- =========================================================
 -- ----- НАЧАЛО ЧАСТИ 10.3 -----
 -- =========================================================
-do
-do
 
-local ziplineActive = false
-
-local runZiplineBtn = Instance.new("TextButton")
-runZiplineBtn.Name = "RunZiplineBtn"
-runZiplineBtn.Size = UDim2.new(0.5, -10, 0, 42)
+local runZiplineBtn = Instance.new("TextButton", bPanel)
+runZiplineBtn.Size = UDim2.new(0.27, -4, 0, 42)
 runZiplineBtn.Position = UDim2.new(0, 5, 0, 72)
-runZiplineBtn.BackgroundColor3 = Color3.fromRGB(45, 145, 220)
-runZiplineBtn.Text = "🚀 Старт Зиплайн"
-runZiplineBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+runZiplineBtn.BackgroundColor3 = Color3.fromRGB(220, 180, 40)
+runZiplineBtn.Text = "🚀 Старт"
+runZiplineBtn.TextColor3 = Color3.fromRGB(25, 25, 25)
 runZiplineBtn.Font = Enum.Font.SourceSansBold
-runZZipLineBtnTextSize = 12
-runZiplineBtn.TextSize = 12
-runZiplineBtn.Parent = bPanel
-Instance.new("UICorner", runZiplineBtn).CornerRadius = UDim.new(0, 5)
+runZiplineBtn.TextSize = 11
+Instance.new("UICorner", runZiplineBtn).CornerRadius = UDim.new(0, 4)
 
-runZiplineBtn.MouseButton1Click:Connect(function()
-    if ziplineActive then
-        ziplineActive = false
-        runZiplineBtn.Text = "🚀 Старт Зиплайн"
-        runZiplineBtn.BackgroundColor3 = Color3.fromRGB(45, 145, 220)
+local loopZiplineBtn = Instance.new("TextButton", bPanel)
+loopZiplineBtn.Size = UDim2.new(0.23, -4, 0, 42)
+loopZiplineBtn.Position = UDim2.new(0.27, 3, 0, 72)
+loopZiplineBtn.BackgroundColor3 = Color3.fromRGB(160, 40, 40)
+loopZiplineBtn.Text = "Loop:\nВЫКЛ"
+loopZiplineBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+loopZiplineBtn.Font = Enum.Font.SourceSansBold
+loopZiplineBtn.TextSize = 10
+Instance.new("UICorner", loopZiplineBtn).CornerRadius = UDim.new(0, 4)
+local isZiplineLoop = false
+loopZiplineBtn.MouseButton1Click:Connect(function()
+    isZiplineLoop = not isZiplineLoop
+    loopZiplineBtn.Text = isZiplineLoop and "Loop:\nВКЛ" or "Loop:\nВЫКЛ"
+    loopZiplineBtn.BackgroundColor3 = isZiplineLoop and Color3.fromRGB(40, 140, 40) or Color3.fromRGB(160, 40, 40)
+end)
+
+local deathZipBtn = Instance.new("TextButton", bPanel)
+deathZipBtn.Size = UDim2.new(0.27, -4, 0, 42)
+deathZipBtn.Position = UDim2.new(0.50, 2, 0, 72)
+deathZipBtn.BackgroundColor3 = Color3.fromRGB(160, 40, 40)
+deathZipBtn.Text = "💀 Смерть:\nВЫКЛ"
+deathZipBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+deathZipBtn.Font = Enum.Font.SourceSansBold
+deathZipBtn.TextSize = 10
+Instance.new("UICorner", deathZipBtn).CornerRadius = UDim.new(0, 4)
+local deathZiplineEnabled = false
+local lastDeathPos = nil
+deathZipBtn.MouseButton1Click:Connect(function()
+    deathZiplineEnabled = not deathZiplineEnabled
+    deathZipBtn.Text = deathZiplineEnabled and "💀 Смерть:\nВКЛ" or "💀 Смерть:\nВЫКЛ"
+    deathZipBtn.BackgroundColor3 = deathZiplineEnabled and Color3.fromRGB(40, 140, 40) or Color3.fromRGB(160, 40, 40)
+end)
+
+local massActionsBtn = Instance.new("TextButton", bPanel)
+massActionsBtn.Size = UDim2.new(0.23, -6, 0, 42)
+massActionsBtn.Position = UDim2.new(0.77, 1, 0, 72)
+massActionsBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+massActionsBtn.Text = "🧹 Стереть\nвыдел."
+massActionsBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+massActionsBtn.Font = Enum.Font.SourceSansBold
+massActionsBtn.TextSize = 10
+Instance.new("UICorner", massActionsBtn).CornerRadius = UDim.new(0, 4)
+massActionsBtn.MouseButton1Click:Connect(function()
+    local i = #savedPoints
+    while i >= 1 do
+        if savedPoints[i].Order and savedPoints[i].Order > 0 then
+            if savedPoints[i].Visual then savedPoints[i].Visual:Destroy() end
+            table.remove(savedPoints, i)
+        end
+        i = i - 1
+    end
+    recalculateOrders()
+    refreshPointList()
+end)
+
+local function moveToDest(hrp, dest, abortFn)
+    if isTeleportMode then
+        hrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+        hrp.CFrame = CFrame.new(dest)
         return
     end
-
-    local orderedPoints = {}
-    for _, pt in ipairs(savedPoints) do
-        if pt.Order and type(pt.Order) == "number" and pt.Pos then
-            table.insert(orderedPoints, pt)
+    local wasAnc = hrp.Anchored
+    if not dropOnPoint then hrp.Anchored = true end
+    while hrp and hrp.Parent and not _G.ScriptDestroyed do
+        if abortFn and abortFn() then break end
+        local diff = dest - hrp.Position
+        local dist = diff.Magnitude
+        if dist <= 1.8 then
+            hrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+            hrp.CFrame = CFrame.new(dest)
+            break
         end
+        local dt = RunService.Heartbeat:Wait()
+        hrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+        hrp.CFrame = CFrame.new(hrp.Position + diff.Unit * math.min(dist, ziplineSpeedValue * dt))
     end
+    if hrp and hrp.Parent and not invisActive then hrp.Anchored = wasAnc end
+end
 
-    table.sort(orderedPoints, function(a, b)
-        return a.Order < b.Order
-    end)
-
-    if #orderedPoints == 0 then return end
+local ziplineActive = false
+runZiplineBtn.MouseButton1Click:Connect(function()
+    if ziplineActive then ziplineActive = false return end
+    local char = Player.Character
+    local hrp = (invisActive and ghostSimulationCube) or (godmodeEnabled and godGroundCube) or (char and char:FindFirstChild("HumanoidRootPart"))
+    if not hrp then return end
 
     ziplineActive = true
-    runZiplineBtn.Text = "⏹ Стоп Зиплайн"
-    runZiplineBtn.BackgroundColor3 = Color3.fromRGB(215, 65, 55)
+    runZiplineBtn.BackgroundColor3 = Color3.fromRGB(120, 100, 20)
+    runZiplineBtn.Text = "🛑 Стоп"
 
     task.spawn(function()
-        local stepPause = math.max(ziplineDelayValue or 0.35, 0.15)
-        for _, pt in ipairs(orderedPoints) do
-            if not ziplineActive or _G.ScriptDestroyed then break end
-            local char = Player.Character
-            local hrp = (phantomRunning and ghostSimulationCube) or (char and char:FindFirstChild("HumanoidRootPart"))
-            if hrp then
-                hrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
-                hrp.CFrame = CFrame.new(pt.Pos + Vector3.new(0, 3, 0))
+        repeat
+            local ordered = {}
+            for _, pt in ipairs(savedPoints) do
+                if pt.Order and pt.Order > 0 then table.insert(ordered, pt) end
             end
-            task.wait(stepPause)
-        end
+            table.sort(ordered, function(a, b) return a.Order < b.Order end)
+            if #ordered == 0 then break end
+
+            for _, pt in ipairs(ordered) do
+                if not ziplineActive or _G.ScriptDestroyed then break end
+                local r = (invisActive and ghostSimulationCube) or (godmodeEnabled and godGroundCube) or (Player.Character and Player.Character:FindFirstChild("HumanoidRootPart"))
+                if not r then break end
+                moveToDest(r, pt.Pos + Vector3.new(0, 3, 0), function() return not ziplineActive end)
+                if ziplineDelayValue > 0 and ziplineActive then task.wait(ziplineDelayValue) end
+            end
+            task.wait(0.05)
+        until not isZiplineLoop or not ziplineActive or _G.ScriptDestroyed
 
         ziplineActive = false
-        if runZiplineBtn and runZiplineBtn.Parent then
-            runZiplineBtn.Text = "🚀 Старт Зиплайн"
-            runZiplineBtn.BackgroundColor3 = Color3.fromRGB(45, 145, 220)
-        end
+        runZiplineBtn.BackgroundColor3 = Color3.fromRGB(220, 180, 40)
+        runZiplineBtn.Text = "🚀 Старт"
     end)
 end)
 
-local deathChainEnabled = false
-local lastDeathPosition = nil
-
-local deathChainBtn = Instance.new("TextButton")
-deathChainBtn.Name = "DeathChainTpBtn"
-deathChainBtn.Size = UDim2.new(0.5, -10, 0, 42)
-deathChainBtn.Position = UDim2.new(0.5, 5, 0, 72)
-deathChainBtn.BackgroundColor3 = Color3.fromRGB(195, 50, 50)
-deathChainBtn.Text = "💀 При смерти: ВЫКЛ"
-deathChainBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-deathChainBtn.Font = Enum.Font.SourceSansBold
-deathChainBtn.TextSize = 12
-deathChainBtn.Parent = bPanel
-Instance.new("UICorner", deathChainBtn).CornerRadius = UDim.new(0, 5)
-
-deathChainBtn.MouseButton1Click:Connect(function()
-    deathChainEnabled = not deathChainEnabled
-    if deathChainEnabled then
-        deathChainBtn.BackgroundColor3 = Color3.fromRGB(45, 175, 65)
-        deathChainBtn.Text = "💀 При смерти: ВКЛ"
-    else
-        deathChainBtn.BackgroundColor3 = Color3.fromRGB(195, 50, 50)
-        deathChainBtn.Text = "💀 При смерти: ВЫКЛ"
-    end
-end)
-
-local function bindDeathChainTracker(char)
+local function bindDeathTracker(char)
     if not char then return end
     local hum = char:WaitForChild("Humanoid", 5)
     local hrp = char:WaitForChild("HumanoidRootPart", 5)
-    if not hum or not hrp then return end
-
-    hum.Died:Connect(function()
-        if hrp and hrp.Parent then
-            lastDeathPosition = hrp.Position
-        end
-    end)
+    if hum and hrp then
+        hum.Died:Connect(function() if hrp and hrp.Parent then lastDeathPos = hrp.Position end end)
+    end
 end
-
-if Player.Character then
-    task.spawn(bindDeathChainTracker, Player.Character)
-end
+if Player.Character then task.spawn(bindDeathTracker, Player.Character) end
 
 Player.CharacterAdded:Connect(function(newChar)
-    task.spawn(bindDeathChainTracker, newChar)
-    if not deathChainEnabled or _G.ScriptPaused or _G.ScriptDestroyed then return end
-
+    task.spawn(bindDeathTracker, newChar)
+    if not deathZiplineEnabled or _G.ScriptPaused or _G.ScriptDestroyed then return end
     local newHrp = newChar:WaitForChild("HumanoidRootPart", 5)
     if not newHrp then return end
-
     task.wait(0.45)
-    if not newHrp or not newHrp.Parent or not deathChainEnabled then return end
 
-    local spawnOriginPos = newHrp.Position
-    local returnBackPos = lastDeathPosition or spawnOriginPos
-
-    local orderedPoints = {}
+    local ordered = {}
     for _, pt in ipairs(savedPoints) do
-        if pt.Order and type(pt.Order) == "number" and pt.Pos then
-            table.insert(orderedPoints, pt)
-        end
+        if pt.Order and pt.Order > 0 then table.insert(ordered, pt) end
     end
+    table.sort(ordered, function(a, b) return a.Order < b.Order end)
+    if #ordered == 0 then return end
 
-    table.sort(orderedPoints, function(a, b)
-        return a.Order < b.Order
-    end)
-
-    if #orderedPoints == 0 then return end
-
-    local stepPause = math.max(ziplineDelayValue or 0.35, 0.3)
-
-    for _, pt in ipairs(orderedPoints) do
-        if not deathChainEnabled or _G.ScriptDestroyed or not newHrp or not newHrp.Parent then
-            break
-        end
-        newHrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
-        newHrp.CFrame = CFrame.new(pt.Pos + Vector3.new(0, 3, 0))
-        task.wait(stepPause)
+    local backPos = lastDeathPos or newHrp.Position
+    for _, pt in ipairs(ordered) do
+        if not deathZiplineEnabled or _G.ScriptDestroyed or not newHrp.Parent then break end
+        moveToDest(newHrp, pt.Pos + Vector3.new(0, 3, 0), function() return not deathZiplineEnabled end)
+        if ziplineDelayValue > 0 then task.wait(ziplineDelayValue) end
     end
-
-    if deathChainEnabled and newHrp and newHrp.Parent and returnBackPos then
-        newHrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
-        newHrp.CFrame = CFrame.new(returnBackPos + Vector3.new(0, 3, 0))
+    if deathZiplineEnabled and newHrp.Parent and backPos then
+        moveToDest(newHrp, backPos + Vector3.new(0, 3, 0), function() return not deathZiplineEnabled end)
     end
 end)
 
 refreshPointList()
 
-end
-end
 -- =========================================================
 -- ----- КОНЕЦ ЧАСТИ 10.3 -----
 -- =========================================================
+
+        
+    
