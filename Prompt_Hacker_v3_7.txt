@@ -7913,7 +7913,12 @@ end)
 
 
 -- =========================================================
--- 🎯 УМНЫЙ АИМ CamLock (Исправленные обработчики)
+-- 🎯 CAMLOCK + 🌀 ORB TELEPORT — COMBINED
+-- =========================================================
+
+-- =========================================================
+-- 🎯 УМНЫЙ АИМ CAMLOCK
+-- Логика исходного блока сохранена
 -- =========================================================
 do
     local Players = game:GetService("Players")
@@ -8090,7 +8095,6 @@ do
 
         local function stopCamLock()
             _v7_camLockActive = false
-
             currentTargetPlr = nil
             currentTargetPart = nil
 
@@ -8210,6 +8214,383 @@ do
                 end
             end
         end)
+    end)
+end
+
+
+-- =========================================================
+-- 🌀 ORB TELEPORT — ОДИН ТУМБЛЕР, ДВЕ КНОПКИ
+-- =========================================================
+do
+    local Players = game:GetService("Players")
+    local RunService = game:GetService("RunService")
+    local UIS = game:GetService("UserInputService")
+
+    local player = Players.LocalPlayer
+
+    local orbEnabled = false
+    local tpOrb = nil
+    local orbFlightConn = nil
+    local trajectoryPart = nil
+    local previewConn = nil
+
+    local orbSpeed = 120
+    local orbFrame = nil
+    local dragConnections = {}
+
+    local function stopOrbFlight()
+        if orbFlightConn then
+            orbFlightConn:Disconnect()
+            orbFlightConn = nil
+        end
+    end
+
+    local function destroyOrb()
+        stopOrbFlight()
+
+        if tpOrb then
+            tpOrb:Destroy()
+            tpOrb = nil
+        end
+    end
+
+    local function destroyTrajectory()
+        if previewConn then
+            previewConn:Disconnect()
+            previewConn = nil
+        end
+
+        if trajectoryPart then
+            trajectoryPart:Destroy()
+            trajectoryPart = nil
+        end
+    end
+
+    local function destroyOrbFrame()
+        for _, connection in ipairs(dragConnections) do
+            pcall(function()
+                connection:Disconnect()
+            end)
+        end
+
+        table.clear(dragConnections)
+
+        if orbFrame then
+            orbFrame:Destroy()
+            orbFrame = nil
+        end
+    end
+
+    local function startTrajectory()
+        destroyTrajectory()
+
+        previewConn = RunService.RenderStepped:Connect(function()
+            if not orbEnabled or _G.ScriptDestroyed then
+                return
+            end
+
+            local cam = workspace.CurrentCamera
+            if not cam then return end
+
+            local origin = cam.CFrame.Position
+            local direction = cam.CFrame.LookVector
+
+            local params = RaycastParams.new()
+            params.FilterType = Enum.RaycastFilterType.Exclude
+            params.FilterDescendantsInstances = {
+                player.Character,
+                tpOrb
+            }
+
+            local result = workspace:Raycast(
+                origin,
+                direction * 300,
+                params
+            )
+
+            local distance = 300
+
+            if result then
+                distance = (result.Position - origin).Magnitude
+            end
+
+            if not trajectoryPart then
+                trajectoryPart = Instance.new("Part")
+                trajectoryPart.Name = "PromptOrbTrajectory_v8"
+                trajectoryPart.Anchored = true
+                trajectoryPart.CanCollide = false
+                trajectoryPart.CanTouch = false
+                trajectoryPart.CanQuery = false
+                trajectoryPart.Material = Enum.Material.Neon
+                trajectoryPart.Color = Color3.fromRGB(170, 0, 255)
+                trajectoryPart.Transparency = 0.35
+                trajectoryPart.Parent = workspace
+            end
+
+            trajectoryPart.Size = Vector3.new(0.2, 0.2, distance)
+
+            trajectoryPart.CFrame = CFrame.lookAt(
+                origin + direction * (distance / 2),
+                origin + direction * distance
+            )
+        end)
+    end
+
+    local function throwOrb()
+        if not orbEnabled then return end
+
+        destroyOrb()
+
+        local cam = workspace.CurrentCamera
+        if not cam then return end
+
+        local direction = cam.CFrame.LookVector
+
+        local orb = Instance.new("Part")
+        orb.Name = "PromptTeleportOrb_v8"
+        orb.Shape = Enum.PartType.Ball
+        orb.Size = Vector3.new(2, 2, 2)
+        orb.Anchored = true
+        orb.CanCollide = false
+        orb.Material = Enum.Material.Neon
+        orb.Color = Color3.fromRGB(170, 0, 255)
+        orb.Position = cam.CFrame.Position + direction * 3
+        orb.Parent = workspace
+
+        tpOrb = orb
+
+        local highlight = Instance.new("Highlight")
+        highlight.FillColor = Color3.fromRGB(170, 0, 255)
+        highlight.OutlineColor = Color3.fromRGB(255, 255, 255)
+        highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+        highlight.Parent = orb
+
+        local params = RaycastParams.new()
+        params.FilterType = Enum.RaycastFilterType.Exclude
+        params.FilterDescendantsInstances = {
+            player.Character,
+            orb
+        }
+
+        orbFlightConn = RunService.Heartbeat:Connect(function(dt)
+            if not orbEnabled or not orb.Parent then
+                destroyOrb()
+                return
+            end
+
+            local step = direction * orbSpeed * dt
+
+            local hit = workspace:Raycast(
+                orb.Position,
+                step,
+                params
+            )
+
+            if not hit then
+                orb.Position = orb.Position + step
+                return
+            end
+
+            local normal = hit.Normal
+            local dot = direction:Dot(normal)
+
+            if math.abs(dot) > 0.7 then
+                orb.Position = hit.Position + normal
+                stopOrbFlight()
+                return
+            end
+
+            local slide = direction - dot * normal
+
+            if slide.Magnitude < 0.001 then
+                orb.Position = hit.Position + normal
+                stopOrbFlight()
+                return
+            end
+
+            local slideDir = slide.Unit
+            local slideStep = slideDir * orbSpeed * 0.3 * dt
+
+            local slideHit = workspace:Raycast(
+                hit.Position + normal * 0.5,
+                slideStep,
+                params
+            )
+
+            if slideHit then
+                orb.Position = slideHit.Position + slideHit.Normal
+                stopOrbFlight()
+            else
+                orb.Position = hit.Position + normal * 0.5 + slideStep
+                direction = slideDir
+            end
+        end)
+    end
+
+    local function teleportToOrb()
+        if not tpOrb or not tpOrb.Parent then
+            return
+        end
+
+        local character = player.Character
+        if not character then return end
+
+        character:PivotTo(
+            tpOrb.CFrame + Vector3.new(0, 3, 0)
+        )
+
+        destroyOrb()
+    end
+
+    local function createOrbFrame()
+        destroyOrbFrame()
+
+        local frame = Instance.new("Frame")
+        frame.Name = "PromptOrbButtonGroup_v8"
+        frame.Size = UDim2.new(0, 190, 0, 112)
+        frame.Position = UDim2.new(0.5, -95, 0.68, 0)
+        frame.BackgroundColor3 = Color3.fromRGB(30, 25, 40)
+        frame.BorderSizePixel = 0
+        frame.Active = true
+        frame.ZIndex = 90
+        frame.Parent = ScreenGui
+
+        orbFrame = frame
+
+        local corner = Instance.new("UICorner")
+        corner.CornerRadius = UDim.new(0, 10)
+        corner.Parent = frame
+
+        local stroke = Instance.new("UIStroke")
+        stroke.Color = Color3.fromRGB(170, 0, 255)
+        stroke.Thickness = 2
+        stroke.Parent = frame
+
+        local header = Instance.new("TextButton")
+        header.Name = "DragHandle"
+        header.Size = UDim2.new(1, 0, 0, 27)
+        header.BackgroundColor3 = Color3.fromRGB(65, 35, 90)
+        header.Text = "🌀 ORB • ПЕРЕМЕСТИТЬ"
+        header.TextColor3 = Color3.new(1, 1, 1)
+        header.Font = Enum.Font.SourceSansBold
+        header.TextSize = 14
+        header.AutoButtonColor = false
+        header.ZIndex = 92
+        header.Parent = frame
+
+        local tpButton = Instance.new("TextButton")
+        tpButton.Name = "TeleportButton"
+        tpButton.Size = UDim2.new(0.46, 0, 0, 58)
+        tpButton.Position = UDim2.new(0.03, 0, 0, 42)
+        tpButton.BackgroundColor3 = Color3.fromRGB(35, 125, 190)
+        tpButton.Text = "⚡ ТП"
+        tpButton.TextColor3 = Color3.new(1, 1, 1)
+        tpButton.Font = Enum.Font.SourceSansBold
+        tpButton.TextSize = 20
+        tpButton.ZIndex = 93
+        tpButton.Parent = frame
+
+        local throwButton = Instance.new("TextButton")
+        throwButton.Name = "ThrowButton"
+        throwButton.Size = UDim2.new(0.46, 0, 0, 58)
+        throwButton.Position = UDim2.new(0.51, 0, 0, 42)
+        throwButton.BackgroundColor3 = Color3.fromRGB(145, 45, 190)
+        throwButton.Text = "🌀 КИНУТЬ"
+        throwButton.TextColor3 = Color3.new(1, 1, 1)
+        throwButton.Font = Enum.Font.SourceSansBold
+        throwButton.TextSize = 17
+        throwButton.ZIndex = 93
+        throwButton.Parent = frame
+
+        for _, button in ipairs({tpButton, throwButton}) do
+            local buttonCorner = Instance.new("UICorner")
+            buttonCorner.CornerRadius = UDim.new(0, 8)
+            buttonCorner.Parent = button
+        end
+
+        tpButton.Activated:Connect(teleportToOrb)
+        throwButton.Activated:Connect(throwOrb)
+
+        -- Перетаскивание общей панели
+        local dragging = false
+        local dragInput
+        local dragStart
+        local startPosition
+
+        header.InputBegan:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1
+                or input.UserInputType == Enum.UserInputType.Touch then
+
+                dragging = true
+                dragInput = input
+                dragStart = input.Position
+                startPosition = frame.Position
+            end
+        end)
+
+        table.insert(dragConnections,
+            UIS.InputChanged:Connect(function(input)
+                if not dragging then return end
+
+                local validMove =
+                    (dragInput.UserInputType == Enum.UserInputType.MouseButton1
+                    and input.UserInputType == Enum.UserInputType.MouseMovement)
+                    or
+                    (dragInput.UserInputType == Enum.UserInputType.Touch
+                    and input.UserInputType == Enum.UserInputType.Touch)
+
+                if validMove then
+                    local delta = input.Position - dragStart
+
+                    frame.Position = UDim2.new(
+                        startPosition.X.Scale,
+                        startPosition.X.Offset + delta.X,
+                        startPosition.Y.Scale,
+                        startPosition.Y.Offset + delta.Y
+                    )
+                end
+            end)
+        )
+
+        table.insert(dragConnections,
+            UIS.InputEnded:Connect(function(input)
+                if input == dragInput then
+                    dragging = false
+                    dragInput = nil
+                end
+            end)
+        )
+    end
+
+
+    -- Единственный тумблер Orb
+    createToggle(
+        visualsPage,
+        "🌀 Orb — Траектория и кнопки",
+        function(value)
+            orbEnabled = value
+
+            if value then
+                createOrbFrame()
+                startTrajectory()
+            else
+                destroyOrbFrame()
+                destroyTrajectory()
+                destroyOrb()
+            end
+        end
+    )
+
+    -- Очистка при закрытии скрипта
+    task.spawn(function()
+        while not _G.ScriptDestroyed do
+            task.wait(0.5)
+        end
+
+        orbEnabled = false
+        destroyOrbFrame()
+        destroyTrajectory()
+        destroyOrb()
     end)
 end
 
