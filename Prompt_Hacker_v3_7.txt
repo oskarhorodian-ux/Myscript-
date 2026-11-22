@@ -7910,227 +7910,523 @@ end)
 -- =========================================================
 -- ----- КОНЕЦ ЧАСТИ 11 -----
 -- =========================================================
-
 -- =========================================================
--- 🛡️ БЛОК 6: УМНЫЙ АИМ И ОРБ-ТЕЛЕПОРТ (Изолированный)
+-- 🎯 УМНЫЙ АИМ (CamLock на базе твоего кода + фильтр тимейтов)
 -- =========================================================
 do
-    -- Используем уникальные локальные переменные, чтобы не сломать другие части скрипта
-    local _v6_Players = game:GetService("Players")
-    local _v6_Player = _v6_Players.LocalPlayer
-    local _v6_RunService = game:GetService("RunService")
-    local _v6_aimbotEnabled = false
-    local _v6_aimbotTarget = nil
-    local _v6_aimbotFOV = 25
-    local _v6_aimbotSmoothness = 0.2
+    local localPlayer = game.Players.LocalPlayer
+    local RunService = game:GetService("RunService")
+    
+    local _v7_camLockGen = 0
+    local _v7_camLockMiniEnabled = false
+    local _v7_camLockActive = false
+    local _v7_camLockMiniBtn = nil
+    local _v7_camLockMarker = nil
+    local _v7_CAMLOCK_SMOOTH = 15 -- Плавность наведения
 
-    -- Функция проверки врага (учитывает команды)
-    local function _v6_isEnemy(plr)
-        if plr == _v6_Player or not plr.Character then return false end
+    -- Функция проверки: враг ли это? (Игнорируем тимейтов)
+    local function isEnemy_v7(plr)
+        if plr == localPlayer or not plr.Character then return false end
         local hum = plr.Character:FindFirstChildOfClass("Humanoid")
         if not hum or hum.Health <= 0 then return false end
         
-        -- Если есть команды, игнорируем своих
-        if plr.Team ~= nil and _v6_Player.Team ~= nil then
-            if plr.Team == _v6_Player.Team then return false end
+        -- Фильтр команд (если есть)
+        if plr.Team ~= nil and localPlayer.Team ~= nil then
+            if plr.Team == localPlayer.Team then
+                return false 
+            end
         end
         return true
     end
 
-    -- Поиск цели в конусе
-    local function _v6_getAimTarget()
-        local cam = workspace.CurrentCamera
-        local bestTarget, bestAngle = nil, math.rad(_v6_aimbotFOV)
-        for _, plr in ipairs(_v6_Players:GetPlayers()) do
-            if _v6_isEnemy(plr) then
-                local head = plr.Character:FindFirstChild("Head")
-                if head then
-                    local toHead = (head.Position - cam.CFrame.Position).Unit
-                    local angle = math.acos(cam.CFrame.LookVector:Dot(toHead))
-                    if angle < bestAngle then
-                        bestTarget, bestAngle = plr, angle
+    -- Поиск ближайшего врага (берем за основу твою логику)
+    local function camLockPickNearest_v7(cam)
+        local bestPlr, bestPart = nil, nil
+        local bestDist = math.huge
+        local camPos = cam.CFrame.Position
+        
+        for _, plr in ipairs(game.Players:GetPlayers()) do
+            if isEnemy_v7(plr) then
+                local char = plr.Character
+                local head = char:FindFirstChild("Head")
+                local hrp = char:FindFirstChild("HumanoidRootPart")
+                
+                if head and hrp then
+                    local dist = (head.Position - camPos).Magnitude
+                    if dist < bestDist and dist < 350 then
+                        bestDist = dist
+                        bestPlr = plr
+                        bestPart = head
                     end
                 end
             end
         end
-        return bestTarget
+        return bestPlr, bestPart
     end
 
-    -- Тумблер Аима
-    createToggle(visualsPage, "🎯 Умный Аим (Только враги v6)", function(Value)
-        _v6_aimbotEnabled = Value
-        _v6_aimbotTarget = nil
-        
-        if not _v6_aimbotEnabled then return end
-        
-        _v6_RunService:BindToRenderStep("v6_SmartAimbotCam", Enum.RenderPriority.Camera.Value + 1, function()
-            if not _v6_aimbotEnabled or _G.ScriptDestroyed or _G.ScriptPaused then return end
-            
-            if not _v6_aimbotTarget or not _v6_aimbotTarget.Character or not _v6_aimbotTarget.Character:FindFirstChild("Head") or not _v6_isEnemy(_v6_aimbotTarget) then
-                _v6_aimbotTarget = _v6_getAimTarget()
+    local function bindTapButton_v7(btn, callback)
+        btn.MouseButton1Click:Connect(callback)
+        btn.TouchTap:Connect(callback)
+    end
+
+    createToggle(visualsPage, "🎯 Умный Аим CamLock (Фильтр)", function(Value)
+        _v7_camLockGen = _v7_camLockGen + 1
+        local myGen = _v7_camLockGen
+
+        _v7_camLockMiniEnabled = Value
+        _v7_camLockActive = false
+        pcall(function() RunService:UnbindFromRenderStep("PromptCamLockStep_v7") end)
+
+        if _v7_camLockMiniBtn then pcall(function() _v7_camLockMiniBtn:Destroy() end) _v7_camLockMiniBtn = nil end
+        if _v7_camLockMarker then pcall(function() _v7_camLockMarker:Destroy() end) _v7_camLockMarker = nil end
+        if not _v7_camLockMiniEnabled then return end
+
+        local btn = Instance.new("TextButton")
+        btn.Name = "CamLockMiniBtn_v7"
+        btn.Size = UDim2.new(0, 52, 0, 52)
+        btn.Position = UDim2.new(0.84, 0, 0.38, 0)
+        btn.BackgroundColor3 = Color3.fromRGB(210, 55, 45)
+        btn.Text = "🎯"
+        btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+        btn.Font = Enum.Font.SourceSansBold
+        btn.TextSize = 24
+        btn.Active = true
+        btn.Draggable = true
+        btn.ZIndex = 90
+        btn.Parent = ScreenGui
+        Instance.new("UICorner", btn).CornerRadius = UDim.new(1, 0)
+        local stroke = Instance.new("UIStroke", btn)
+        stroke.Thickness = 2
+        stroke.Color = Color3.fromRGB(255, 220, 60)
+        _v7_camLockMiniBtn = btn
+
+        local currentTargetPlr, currentTargetPart = nil, nil
+
+        local function setLooks(locked)
+            btn.BackgroundColor3 = locked and Color3.fromRGB(45, 175, 55) or Color3.fromRGB(210, 55, 45)
+            btn.Text = locked and "🔒" or "🎯"
+        end
+
+        local function clearMarker()
+            if _v7_camLockMarker then pcall(function() _v7_camLockMarker:Destroy() end) _v7_camLockMarker = nil end
+        end
+
+        local lastMarkerTick = 0
+        local function updateMarker(plr, part)
+            if not _v7_camLockMarker or not _v7_camLockMarker.Parent then
+                local bb = Instance.new("BillboardGui")
+                bb.Name = "PromptCamLockMarker_v7"
+                bb.AlwaysOnTop = true
+                bb.Size = UDim2.new(0, 180, 0, 26)
+                bb.StudsOffset = Vector3.new(0, 2.6, 0)
+                local lbl = Instance.new("TextLabel")
+                lbl.Name = "L"
+                lbl.Size = UDim2.new(1, 0, 1, 0)
+                lbl.BackgroundTransparency = 1
+                lbl.TextColor3 = Color3.fromRGB(255, 80, 60)
+                lbl.TextStrokeTransparency = 0
+                lbl.Font = Enum.Font.SourceSansBold
+                lbl.TextSize = 16
+                lbl.Parent = bb
+                bb.Parent = ScreenGui
+                _v7_camLockMarker = bb
             end
-            
-            if _v6_aimbotTarget and _v6_aimbotTarget.Character and _v6_aimbotTarget.Character:FindFirstChild("Head") then
+            if _v7_camLockMarker.Adornee ~= part then _v7_camLockMarker.Adornee = part end
+            if tick() - lastMarkerTick > 0.15 then
+                lastMarkerTick = tick()
                 local cam = workspace.CurrentCamera
-                local targetCF = CFrame.new(cam.CFrame.Position, _v6_aimbotTarget.Character.Head.Position)
-                cam.CFrame = cam.CFrame:Lerp(targetCF, _v6_aimbotSmoothness)
+                local lbl = _v7_camLockMarker:FindFirstChild("L")
+                if lbl and cam then
+                    lbl.Text = "🎯 " .. plr.Name .. " [" .. tostring(math.floor((part.Position - cam.CFrame.Position).Magnitude)) .. " st]"
+                end
             end
+        end
+
+        local function stopCamLock()
+            clearMarker()
+            _v7_camLockActive = false
+            currentTargetPlr, currentTargetPart = nil, nil
+            pcall(function() RunService:UnbindFromRenderStep("PromptCamLockStep_v7") end)
+            if btn and btn.Parent then setLooks(false) end
+        end
+
+        local function startCamLock()
+            _v7_camLockActive = true
+            setLooks(true)
+
+            RunService:BindToRenderStep("PromptCamLockStep_v7", Enum.RenderPriority.Camera.Value + 1, function(dt)
+                if _G.ScriptDestroyed or not _v7_camLockMiniEnabled or not btn or not btn.Parent then
+                    pcall(function() RunService:UnbindFromRenderStep("PromptCamLockStep_v7") end)
+                    return
+                end
+                if not _v7_camLockActive or _G.ScriptPaused then return end
+
+                local cam = workspace.CurrentCamera
+                if not cam or cam.CameraType == Enum.CameraType.Scriptable then return end
+
+                local nearPlr, nearPart = camLockPickNearest_v7(cam)
+                currentTargetPlr, currentTargetPart = nearPlr, nearPart
+
+                if currentTargetPlr and currentTargetPart and currentTargetPart.Parent then
+                    updateMarker(currentTargetPlr, currentTargetPart)
+
+                    local aimPos = currentTargetPart.Position
+                    local camPos = cam.CFrame.Position
+                    local focusPos = cam.Focus.Position
+                    local zoom = (camPos - focusPos).Magnitude
+                    local toTarget = aimPos - focusPos
+
+                    local targetCF = nil
+                    if toTarget.Magnitude > 0.5 then
+                        if zoom > 1 then
+                            targetCF = CFrame.lookAt(focusPos - toTarget.Unit * zoom, aimPos)
+                        elseif (aimPos - camPos).Magnitude > 0.5 then
+                            targetCF = CFrame.lookAt(camPos, aimPos)
+                        end
+                    end
+
+                    if targetCF then
+                        if _v7_CAMLOCK_SMOOTH > 0 then
+                            local alpha = 1 - math.exp(-_v7_CAMLOCK_SMOOTH * (dt or 1 / 60))
+                            cam.CFrame = cam.CFrame:Lerp(targetCF, alpha)
+                        else
+                            cam.CFrame = targetCF
+                        end
+                    end
+                else
+                    clearMarker()
+                end
+            end)
+        end
+
+        local lastTap = 0
+        bindTapButton_v7(btn, function()
+            if tick() - lastTap < 0.3 then return end
+            lastTap = tick()
+            if _v7_camLockActive then stopCamLock() else startCamLock() end
+        end)
+
+        task.spawn(function()
+            while myGen == _v7_camLockGen and _v7_camLockMiniEnabled and not _G.ScriptDestroyed do task.wait(0.2) end
+            if myGen == _v7_camLockGen then stopCamLock() end
         end)
     end)
+end
 
-    -- ==========================================
-    -- ОРБ-ТЕЛЕПОРТ
-    -- ==========================================
-    local _v6_orbToolEnabled = false
-    local _v6_tpOrb = nil
-    local _v6_tpOrbConn = nil
-    local _v6_trajectoryPart = nil
-    local _v6_orbPreviewConn = nil
-    local _v6_tpOrbSpeed = 120
+-- =========================================================
+-- 🌀 ОРБ-ТЕЛЕПОРТ (Единый тумблер + группа кнопок)
+-- =========================================================
+do
+    local _v7_Player = game:GetService("Players").LocalPlayer
+    local _v7_RunService = game:GetService("RunService")
 
-    local function _v6_createOrbVisuals(orb)
-        local hl = Instance.new("Highlight", orb)
+    local _v7_tpOrb = nil
+    local _v7_tpOrbConn = nil
+    local _v7_trajectoryPart = nil
+    local _v7_orbPreviewConn = nil
+
+    local _v7_OrbSpeed = 120
+    local _v7_OrbEnabled = false
+
+    local _v7_OrbGroup = nil
+    local _v7_OrbGeneration = 0
+
+    -- Удаление орба
+    local function _v7_DestroyOrb()
+        if _v7_tpOrbConn then
+            _v7_tpOrbConn:Disconnect()
+            _v7_tpOrbConn = nil
+        end
+
+        if _v7_tpOrb then
+            _v7_tpOrb:Destroy()
+            _v7_tpOrb = nil
+        end
+    end
+
+    -- Очистка траектории
+    local function _v7_DestroyTrajectory()
+        if _v7_orbPreviewConn then
+            _v7_orbPreviewConn:Disconnect()
+            _v7_orbPreviewConn = nil
+        end
+
+        if _v7_trajectoryPart then
+            _v7_trajectoryPart:Destroy()
+            _v7_trajectoryPart = nil
+        end
+    end
+
+    -- Удаление группы кнопок
+    local function _v7_DestroyOrbGroup()
+        if _v7_OrbGroup then
+            _v7_OrbGroup:Destroy()
+            _v7_OrbGroup = nil
+        end
+    end
+
+    -- Создание траектории
+    local function _v7_StartTrajectory()
+        _v7_DestroyTrajectory()
+
+        _v7_orbPreviewConn = _v7_RunService.RenderStepped:Connect(function()
+            if not _v7_OrbEnabled or _G.ScriptDestroyed then return end
+
+            local cam = workspace.CurrentCamera
+            if not cam then return end
+
+            local dir = cam.CFrame.LookVector
+
+            local params = RaycastParams.new()
+            params.FilterDescendantsInstances = {_v7_Player.Character}
+            params.FilterType = Enum.RaycastFilterType.Exclude
+
+            local hit = workspace:Raycast(
+                cam.CFrame.Position,
+                dir * 300,
+                params
+            )
+
+            local dist = 300
+            if hit then
+                dist = (hit.Position - cam.CFrame.Position).Magnitude
+            end
+
+            if not _v7_trajectoryPart then
+                _v7_trajectoryPart = Instance.new("Part")
+                _v7_trajectoryPart.Name = "OrbTrajectory_v7"
+                _v7_trajectoryPart.Anchored = true
+                _v7_trajectoryPart.CanCollide = false
+                _v7_trajectoryPart.CanTouch = false
+                _v7_trajectoryPart.CanQuery = false
+                _v7_trajectoryPart.Material = Enum.Material.Neon
+                _v7_trajectoryPart.Color = Color3.fromRGB(170, 0, 255)
+                _v7_trajectoryPart.Transparency = 0.5
+                _v7_trajectoryPart.Parent = workspace
+            end
+
+            _v7_trajectoryPart.Size = Vector3.new(0.2, 0.2, dist)
+
+            _v7_trajectoryPart.CFrame = CFrame.lookAt(
+                cam.CFrame.Position + dir * (dist / 2),
+                cam.CFrame.Position + dir * dist
+            )
+        end)
+    end
+
+    -- Кинуть орб
+    local function _v7_ThrowOrb()
+        if not _v7_OrbEnabled then return end
+
+        _v7_DestroyOrb()
+
+        local cam = workspace.CurrentCamera
+        if not cam then return end
+
+        local dir = cam.CFrame.LookVector
+
+        _v7_tpOrb = Instance.new("Part")
+        _v7_tpOrb.Name = "TeleportOrb_v7"
+        _v7_tpOrb.Shape = Enum.PartType.Ball
+        _v7_tpOrb.Size = Vector3.new(2, 2, 2)
+        _v7_tpOrb.Anchored = true
+        _v7_tpOrb.CanCollide = false
+        _v7_tpOrb.Material = Enum.Material.Neon
+        _v7_tpOrb.Color = Color3.fromRGB(170, 0, 255)
+        _v7_tpOrb.Position = cam.CFrame.Position + dir * 3
+        _v7_tpOrb.Parent = workspace
+
+        local hl = Instance.new("Highlight")
         hl.FillColor = Color3.fromRGB(170, 0, 255)
         hl.OutlineColor = Color3.fromRGB(255, 255, 255)
         hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-        
-        local light = Instance.new("PointLight", orb)
-        light.Color = Color3.fromRGB(170, 0, 255)
-        light.Brightness = 3
-        light.Range = 15
-        
-        local trail = Instance.new("Trail", orb)
-        trail.Color = ColorSequence.new({ColorSequenceKeypoint.new(0, Color3.fromRGB(255,255,255)), ColorSequenceKeypoint.new(1, Color3.fromRGB(170,0,255))})
-        trail.Lifetime = 0.6
-        trail.Thickness = 0.5
-        
-        local pe = Instance.new("ParticleEmitter", orb)
-        pe.Texture = "rbxassetid://243660364"
-        pe.Color = ColorSequence.new(Color3.fromRGB(170, 0, 255))
-        pe.Size = NumberSequence.new(1.5, 0)
-        pe.Lifetime = NumberRange.new(0.3, 0.6)
-        pe.Rate = 40
-        pe.Speed = NumberRange.new(2, 5)
-    end
-
-    local function _v6_updateTrajectory()
-        if not _v6_orbToolEnabled or _G.ScriptDestroyed then
-            if _v6_trajectoryPart then _v6_trajectoryPart:Destroy() _v6_trajectoryPart = nil end
-            if _v6_orbPreviewConn then _v6_orbPreviewConn:Disconnect() _v6_orbPreviewConn = nil end
-            return
-        end
-
-        if _v6_orbPreviewConn then return end
-        local cam = workspace.CurrentCamera
-        
-        _v6_orbPreviewConn = _v6_RunService.RenderStepped:Connect(function()
-            if not _v6_orbToolEnabled or _G.ScriptDestroyed then return end
-            
-            local dir = cam.CFrame.LookVector
-            local params = RaycastParams.new()
-            params.FilterDescendantsInstances = {_v6_Player.Character, _v6_tpOrb}
-            params.FilterType = Enum.RaycastFilterType.Exclude
-            
-            local hit = workspace:Raycast(cam.CFrame.Position, dir * 300, params)
-            local distance = 300
-            if hit then distance = (hit.Position - cam.CFrame.Position).Magnitude end
-            
-            if not _v6_trajectoryPart then
-                _v6_trajectoryPart = Instance.new("Part")
-                _v6_trajectoryPart.Anchored = true
-                _v6_trajectoryPart.CanCollide = false
-                _v6_trajectoryPart.Material = Enum.Material.Neon
-                _v6_trajectoryPart.Color = Color3.fromRGB(170, 0, 255)
-                _v6_trajectoryPart.Transparency = 0.5
-                _v6_trajectoryPart.Parent = workspace
-            end
-            
-            _v6_trajectoryPart.Size = Vector3.new(0.1, 0.1, distance)
-            _v6_trajectoryPart.CFrame = CFrame.lookAt(cam.CFrame.Position + dir * (distance/2), cam.CFrame.Position + dir * distance)
-        end)
-    end
-
-    createToggle(visualsPage, "🌀 Режим Орб-Телепорта (Траектория v6)", function(Value)
-        _v6_orbToolEnabled = Value
-        _v6_updateTrajectory()
-        if not _v6_orbToolEnabled then
-            if _v6_trajectoryPart then _v6_trajectoryPart:Destroy() _v6_trajectoryPart = nil end
-        end
-    end)
-
-    createButton(visualsPage, "🌀 Кинуть Орб (v6)", function()
-        if not _v6_orbToolEnabled then return end
-        
-        if _v6_tpOrb then _v6_tpOrb:Destroy() end
-        if _v6_tpOrbConn then _v6_tpOrbConn:Disconnect() end
-        
-        local cam = workspace.CurrentCamera
-        local dir = cam.CFrame.LookVector
-
-        _v6_tpOrb = Instance.new("Part")
-        _v6_tpOrb.Shape = Enum.PartType.Ball
-        _v6_tpOrb.Size = Vector3.one * 2
-        _v6_tpOrb.Anchored = true
-        _v6_tpOrb.CanCollide = false
-        _v6_tpOrb.Material = Enum.Material.Neon
-        _v6_tpOrb.Color = Color3.fromRGB(170, 0, 255)
-        _v6_tpOrb.Position = cam.CFrame.Position + dir * 3
-        _v6_tpOrb.Parent = workspace
-        
-        _v6_createOrbVisuals(_v6_tpOrb)
+        hl.Parent = _v7_tpOrb
 
         local params = RaycastParams.new()
-        params.FilterDescendantsInstances = {_v6_Player.Character, _v6_tpOrb}
+        params.FilterDescendantsInstances = {
+            _v7_Player.Character,
+            _v7_tpOrb
+        }
         params.FilterType = Enum.RaycastFilterType.Exclude
 
-        _v6_tpOrbConn = _v6_RunService.Heartbeat:Connect(function(dt)
-            if not _v6_tpOrb or not _v6_tpOrb.Parent then return end
-            local step = dir * _v6_tpOrbSpeed * dt
-            local hit = workspace:Raycast(_v6_tpOrb.Position, step, params)
-            
+        _v7_tpOrbConn = _v7_RunService.Heartbeat:Connect(function(dt)
+            if not _v7_tpOrb or not _v7_tpOrb.Parent then
+                _v7_DestroyOrb()
+                return
+            end
+
+            local step = dir * _v7_OrbSpeed * dt
+            local hit = workspace:Raycast(
+                _v7_tpOrb.Position,
+                step,
+                params
+            )
+
             if hit then
                 local normal = hit.Normal
                 local dot = dir:Dot(normal)
-                
-                if math.abs(dot) > 0.9 then
-                    _v6_tpOrb.Position = hit.Position + normal * 1
-                    _v6_tpOrbConn:Disconnect()
-                    _v6_tpOrb.Material = Enum.Material.Glass
+
+                if math.abs(dot) > 0.7 then
+                    _v7_tpOrb.Position = hit.Position + normal
+                    _v7_tpOrbConn:Disconnect()
+                    _v7_tpOrbConn = nil
                 else
-                    local slideDir = (dir - (dot * normal)).Unit
-                    local slideStep = slideDir * (_v6_tpOrbSpeed * 0.3) * dt
-                    
-                    local slideHit = workspace:Raycast(hit.Position + normal * 0.5, slideStep, params)
+                    local slideVector = dir - dot * normal
+
+                    if slideVector.Magnitude < 0.001 then
+                        _v7_tpOrb.Position = hit.Position + normal
+                        _v7_tpOrbConn:Disconnect()
+                        _v7_tpOrbConn = nil
+                        return
+                    end
+
+                    local slideDir = slideVector.Unit
+                    local slideStep = slideDir * (_v7_OrbSpeed * 0.3) * dt
+
+                    local slideHit = workspace:Raycast(
+                        hit.Position + normal * 0.5,
+                        slideStep,
+                        params
+                    )
+
                     if slideHit then
-                        _v6_tpOrb.Position = slideHit.Position + slideHit.Normal * 1
+                        _v7_tpOrb.Position =
+                            slideHit.Position + slideHit.Normal
                     else
-                        _v6_tpOrb.Position = hit.Position + normal * 0.5 + slideStep
+                        _v7_tpOrb.Position =
+                            hit.Position + normal * 0.5 + slideStep
                         dir = slideDir
                     end
                 end
             else
-                _v6_tpOrb.Position += step
+                _v7_tpOrb.Position += step
             end
         end)
-    end)
+    end
 
-    createButton(visualsPage, "⚡ Телепорт к Орбу (v6)", function()
-        if _v6_tpOrb and _v6_tpOrb.Parent and _v6_Player.Character then
-            _v6_Player.Character:PivotTo(_v6_tpOrb.CFrame + Vector3.new(0, 3, 0))
-            
-            local explosion = Instance.new("Explosion")
-            explosion.Position = _v6_tpOrb.Position
-            explosion.BlastRadius = 0
-            explosion.BlastPressure = 0
-            explosion.DestroyJointRadiusPercent = 0
-            explosion.Parent = workspace
-            
-            _v6_tpOrb:Destroy()
-            if _v6_tpOrbConn then _v6_tpOrbConn:Disconnect() end
-            _v6_tpOrb = nil
+    -- Телепорт к орбу
+    local function _v7_TeleportToOrb()
+        if not _v7_OrbEnabled then return end
+
+        if _v7_tpOrb and _v7_tpOrb.Parent then
+            local character = _v7_Player.Character
+
+            if character then
+                character:PivotTo(
+                    _v7_tpOrb.CFrame + Vector3.new(0, 3, 0)
+                )
+
+                _v7_DestroyOrb()
+            end
         end
-    end)
-end -- Конец изолированного блока
+    end
+
+    -- Создание единой группы кнопок
+    local function _v7_CreateOrbGroup()
+        _v7_DestroyOrbGroup()
+
+        local group = Instance.new("Frame")
+        group.Name = "OrbButtonGroup_v7"
+        group.Size = UDim2.new(0, 126, 0, 52)
+        group.Position = UDim2.new(0.72, 0, 0.72, 0)
+        group.BackgroundTransparency = 1
+        group.Active = true
+        group.Draggable = true
+        group.ZIndex = 90
+        group.Parent = ScreenGui
+
+        _v7_OrbGroup = group
+
+        local layout = Instance.new("UIListLayout")
+        layout.FillDirection = Enum.FillDirection.Horizontal
+        layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+        layout.VerticalAlignment = Enum.VerticalAlignment.Center
+        layout.Padding = UDim.new(0, 6)
+        layout.Parent = group
+
+        local function makeButton(name, title, color, callback)
+            local btn = Instance.new("TextButton")
+            btn.Name = name
+            btn.Size = UDim2.new(0, 60, 0, 48)
+            btn.BackgroundColor3 = color
+            btn.Text = title
+            btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+            btn.Font = Enum.Font.SourceSansBold
+            btn.TextSize = 17
+            btn.AutoButtonColor = true
+            btn.ZIndex = 91
+            btn.Parent = group
+
+            local corner = Instance.new("UICorner")
+            corner.CornerRadius = UDim.new(0, 12)
+            corner.Parent = btn
+
+            local stroke = Instance.new("UIStroke")
+            stroke.Thickness = 2
+            stroke.Color = Color3.fromRGB(220, 180, 255)
+            stroke.Parent = btn
+
+            btn.MouseButton1Click:Connect(callback)
+            btn.TouchTap:Connect(callback)
+
+            return btn
+        end
+
+        makeButton(
+            "OrbTP_v7",
+            "⚡ ТП",
+            Color3.fromRGB(45, 150, 65),
+            _v7_TeleportToOrb
+        )
+
+        makeButton(
+            "OrbThrow_v7",
+            "🌀 Кинуть",
+            Color3.fromRGB(125, 45, 190),
+            _v7_ThrowOrb
+        )
+    end
+
+    -- Главный тумблер
+    createToggle(
+        visualsPage,
+        "🌀 Орб — управление",
+        function(Value)
+
+            _v7_OrbGeneration += 1
+            local myGen = _v7_OrbGeneration
+
+            _v7_OrbEnabled = Value
+
+            if not Value then
+                _v7_DestroyOrbGroup()
+                _v7_DestroyTrajectory()
+                _v7_DestroyOrb()
+                return
+            end
+
+            _v7_CreateOrbGroup()
+            _v7_StartTrajectory()
+
+            -- Автоматическая очистка при уничтожении скрипта
+            task.spawn(function()
+                while myGen == _v7_OrbGeneration
+                    and _v7_OrbEnabled
+                    and not _G.ScriptDestroyed do
+                    task.wait(0.2)
+                end
+
+                if myGen == _v7_OrbGeneration then
+                    _v7_OrbEnabled = false
+                    _v7_DestroyOrbGroup()
+                    _v7_DestroyTrajectory()
+                    _v7_DestroyOrb()
+                end
+            end)
+        end
+    )
+end
+
 
 -- Отключение диагностики при полном закрытии GUI
 task.spawn(function()
