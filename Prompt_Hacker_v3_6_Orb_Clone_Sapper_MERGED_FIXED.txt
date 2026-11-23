@@ -9,6 +9,20 @@
 -- Запуск: loadstring(game:HttpGet("RAW_GITHUB_URL"))()
 -- Важно: серверный TrainingNPC и серверные эффекты нельзя реализовать
 -- только клиентским loadstring; этот файл включает клиентскую часть.
+-- =====================================================
+-- 🛡️ ANTI DOUBLE EXECUTION
+-- =====================================================
+local ENV = (getgenv and getgenv()) or _G
+local SCRIPT_KEY = "__PromptHacker_v36_Running"
+
+if ENV[SCRIPT_KEY] then
+    warn("[Prompt Hacker] Скрипт уже запущен!")
+    return
+end
+
+ENV[SCRIPT_KEY] = true
+
+print("[Prompt Hacker] Успешный запуск!")
 
 --=========================================================
 -- ----- НАЧАЛО ЧАСТИ 1 -----
