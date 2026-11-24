@@ -2844,7 +2844,7 @@ local function startTroll()
                 local myCharacter = Player.Character
                 local myRoot = myCharacter and myCharacter:FindFirstChild("HumanoidRootPart")
                 if targetRoot and myRoot then
-                    local offset = 2.2 + math.sin(os.clock() * 10.5) * 1.6
+                    local offset = 2.2 + math.sin(os.clock() * 20) * 1.6
                     local destination = targetRoot.CFrame * CFrame.new(0, 0, offset)
                     myRoot.AssemblyLinearVelocity = Vector3.zero
                     myRoot.CFrame = destination
